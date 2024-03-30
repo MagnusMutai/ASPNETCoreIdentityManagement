@@ -1,11 +1,17 @@
 using ASPNETCoreIdentityManagement;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using System.Security.Claims;
 using static ASPNETCoreIdentityManagement.Database;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddIdentity<IdentityUser, IdentityRole>()
+    .AddDefaultTokenProviders();
+
+builder.Services.AddDataProtection();
 
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
         .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -15,7 +21,7 @@ builder.Services.AddAuthorization(builder =>
     builder.AddPolicy("manager", pb =>
     {
         pb.RequireAuthenticatedUser()
-            .AddAuthenticationSchemes()
+            .AddAuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme)
             .RequireClaim("role", "manager");
     });
 });
@@ -30,6 +36,14 @@ app.UseAuthorization();
 
 app.MapGet("/", () => "Hello World!");
 app.MapGet( "/protected", () => "something super secret!").RequireAuthorization("manager");
+
+app.MapGet("/test", (
+    UserManager<IdentityUser> userMgr,
+    SignInManager<IdentityUser> signMgr
+    ) =>
+{
+
+});
 
 app.MapGet(pattern: "/register", handler: async(
     string username,
@@ -84,6 +98,41 @@ app.MapGet("/promote", async(
     await db.PutAsync(user);
     return "promoted!";
 
+});
+
+app.MapGet("/start-password-reset", async(
+    string username,
+    Database db,
+    IDataProtectionProvider provider
+    ) =>
+{
+    var protector = provider.CreateProtector("PasswordReset");
+    var user = await db.GetUserAsync(username);
+    return protector.Protect(user.Username);
+
+});
+
+app.MapGet("/end-password-reset", async(
+    string username,
+    string password,
+    string hash,
+    Database db,
+    IPasswordHasher<User> hasher,
+    IDataProtectionProvider provider
+    ) =>
+{
+    var protector = provider.CreateProtector("PasswordReset");
+    var hashUsername = protector.Unprotect(hash);
+    if (hashUsername != username)
+    {
+        return "bad hash";
+    }
+
+    var user = await db.GetUserAsync(username);
+    user.PasswordHash = hasher.HashPassword(user, password);
+    await db.PutAsync(user);
+
+    return "password result";
 });
 
 app.Run();
